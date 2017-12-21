@@ -18,6 +18,13 @@
  * cases where a web page changing content of DOM elements in real-time via AJAX
  * but is not changing the DOM itself. In other words, the page has loaded but it
  * it changing the items displayed asynchronously.
+ *
+ * TODO: Explore better encapsulation, auto function that creates an object instance?
+ * TODO: Implicit binding with "this" failed, resolve explicit LoadChecker qualification
+ * TODO: Turn this into an object that can be created to support multiple instances (one hit wonder now)
+ * TODO: Current implementation supports a single call back, consider an array?
+ * TODO: Add a configuration parameter to allow customized timeouts
+ * TODO: Consider dynamically setting timeouts for varying connection and website speed, and/or adding N retries parameter
  */
 
 var LoadChecker = {}; // encapsulate the code in an object, keep everything private
@@ -111,7 +118,6 @@ LoadChecker._nodeCountChangeObserver = function () {
  * @private
  */
 LoadChecker._domMutationsCountObserver = function () {
-    //LoadChecker._intervalCount++;
     var isDomChanging = LoadChecker._mutationsCount > 0;
 
     if (isDomChanging) {
@@ -134,6 +140,8 @@ LoadChecker._domMutationsCountObserver = function () {
  * @private
  */
 LoadChecker._setupMutationObserverIfPossible = function() {
+
+    var isObserverSetupSuccessful = false;
     try {
         MutationObserver = window.MutationObserver || window.WebKitMutationObserver ;
         var mutationObserver = new MutationObserver(function (mutations, observer) {
@@ -166,13 +174,23 @@ LoadChecker._setupMutationObserverIfPossible = function() {
                 characterDataOldValue: true
             });
             console.log("LoadChecker: INFO: Successfully setup MutationObserver for DOM change notification");
+            isObserverSetupSuccessful = true;
         }
     } catch (ex) {
         console.log("LoadChecker: WARNING: Cannot use MutationObserver, defaulting to node count only",ex);
         return false;
     }
 
-    return true;
+    return isObserverSetupSuccessful;
+};
+
+
+LoadChecker._initializeCounters = function() {
+    LoadChecker._steadyStateIntervals = 0;
+    LoadChecker._mutationsCount = 0;
+    LoadChecker._intervalCount = 0;
+    LoadChecker._lastKnownNodeCountForMutationEvent = 0;
+    LoadChecker._lastKnownNodeCountForNodeCountCheck = 0;
 };
 
 /***
@@ -181,9 +199,7 @@ LoadChecker._setupMutationObserverIfPossible = function() {
  */
 LoadChecker._setupLoadChecker = function () {
     try {
-        LoadChecker._steadyStateIntervals = 0;
-        LoadChecker._mutationsCount = 0;
-        LoadChecker._intervalCount = 0;
+        LoadChecker._initializeCounters();
         if (LoadChecker._setupMutationObserverIfPossible()) {
             LoadChecker._domMutationOrNodeCountIntervalCheck = setInterval(LoadChecker._domMutationsCountObserver, LoadChecker._CHECK_INTERVAL_MS);
             console.log("LoadChecker: INFO: Using MutationObserver for DOM change checking");
@@ -295,6 +311,7 @@ LoadChecker._executeCallbackAfterPageIsLoaded = function() {
 /***
  * Perform basic validation on configuration.
  * NOTE: comment out this validation and make MAX_INTERVALS < that STEADY_INTERVALS to test time out errors
+ * @throws error message when configuration of timeout will lead to failed page load state determination
  * @private
  */
 LoadChecker._validateConfiguration = function() {
@@ -313,6 +330,8 @@ LoadChecker._validateConfiguration = function() {
  * (see configuration variables at top of file).
  * @param callback
  * @throws error message when wait time exceeds LoadChecker._EXIT_REGARDLESS_AFTER_MAX_INTERVALS * LoadChecker._CHECK_INTERVAL_MS / 1000.0
+ * @throws error message when timeout configuration is invalid
+ * TODO: Currently eats exceptions from callback, but logs them to console, consider rethrowing these back to caller
  */
 LoadChecker.callWhenReadyToGo = function (callback)
 {
