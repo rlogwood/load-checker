@@ -1,28 +1,52 @@
-
-//var LoadChecker = new Object;
-var LoadChecker = {};
-
 /***
- * Setup up constants and configuration defaults
- * TODO: Setup a configuration object to allow the defaults to be changed
- * TODO: Parameterize configuration based on speed of client and remote site
+ * LoadChecker.callWhenReadyToGo(callback) - wait until a page has loaded and execute
+ * the supplied call back.
+ *
+ * The approach taken detects DOM mutation events and checks for a change in
+ * the number of nodes in the DOM when detected. After a period of no changes,
+ * the page is considered loaded.
+ *
+ * If DOM mutation events aren't supported, the fallback is to count if the number
+ * of DOM nodes have changed.
+ *
+ * As a follow-up I'd like to explore the approach suggested here in the following
+ * StackOverflow link, which involves overriding the XMLHttpRequestl.prototype.send
+ * function: https://stackoverflow.com/questions/10783463/javascript-detect-ajax-requests
+ *
+ * Monitoring the AJAX calls directly may complement the approach taken, but I'm
+ * not sure if it's a full substitute. The approach used should reasonably handle
+ * cases where a web page changing content of DOM elements in real-time via AJAX
+ * but is not changing the DOM itself. In other words, the page has loaded but it
+ * it changing the items displayed asynchronously.
  */
 
-LoadChecker._domMutationOrNodeCountIntervalCheck = null;
-LoadChecker._CHECK_INTERVAL_MS = 500;
+var LoadChecker = {}; // encapsulate the code in an object, keep everything private
+                      // except for the entry point LoadChecker.callWhenReadyToGo
 
+// __________________________________________________________________________
+// Configuration constants that determine timing used when determining
+// state of page load.
+// TODO: These constants need to be reviewed, perhaps set dynamically
+// --------------------------------------------------------------------------
+LoadChecker._CHECK_INTERVAL_MS = 500;                  // interval between checks for steady state
+LoadChecker._READY_AFTER_N_STEADY_STATE_INTERVALS = 5; // expect steady state after 5 checks (2.5s)
+LoadChecker._EXIT_REGARDLESS_AFTER_MAX_INTERVALS = 20; // if we go this long 20 checks (10s) without a steady state,
+                                                       // consider it an exception, investigate
+// __________________________________________________________________________
+// State variables that track the status of the page load state determination
+// --------------------------------------------------------------------------
+LoadChecker._domMutationOrNodeCountIntervalCheck = null; // capture interval function used to check load status
 LoadChecker._lastKnownNodeCountForMutationEvent = 0;
-LoadChecker._mutationsCount = 0;
 LoadChecker._lastKnownNodeCountForNodeCountCheck = 0;
-
-LoadChecker._EXIT_REGARDLESS_AFTER_MAX_INTERVALS = 20; // if we go this long (10s) without a steady state, consider it an exception, investigate
+LoadChecker._mutationsCount = 0;
 LoadChecker._intervalCount = 0;
 LoadChecker._steadyStateIntervals = 0;
-LoadChecker._READY_AFTER_N_STEADY_STATE_INTERVALS = 5; // expect steady state after (2.5s)
 
-
+// _____________________________________________________________________
+// NOTE: EventUtil taken from WROX Professional JavaScript for Web Devs
+// I'll defer to their browser variation chops
+// --------------------------------------------------------------------------
 LoadChecker.EventUtil = {};
-
 LoadChecker.EventUtil.addEventHandler = function (oTarget, sEventType, fnHandler) {
     if (oTarget.addEventListener) {
         oTarget.addEventListener(sEventType, fnHandler, false);
@@ -32,7 +56,6 @@ LoadChecker.EventUtil.addEventHandler = function (oTarget, sEventType, fnHandler
         oTarget["on" + sEventType] = fnHandler;
     }
 };
-
 LoadChecker.EventUtil.removeEventHandler = function (oTarget, sEventType, fnHandler) {
     if (oTarget.removeEventListener) {
         oTarget.removeEventListener(sEventType, fnHandler, false);
@@ -43,30 +66,36 @@ LoadChecker.EventUtil.removeEventHandler = function (oTarget, sEventType, fnHand
     }
 };
 
-// Recursively count the nodes in the DOM
-// TODO: Look for a more efficient way to do this
+
+/***
+ * Count the number of element nodes for DOM
+ * TODO: Find a more effecient way to do this
+ * @param children - starting point in tree
+ * @returns {number} - count of element nodes
+ * @private
+ */
 LoadChecker._countElements = function (children) {
     var count = 0;
-
-    //console.log("counting children:",children.length);
-
     // snap the count in (size) to prevent infinite loop for every changing DOM
     for (var i = 0, size = children.length; i < size; i++) {
         if (children[i].nodeType === document.ELEMENT_NODE) {
             count++;
-            //console.log(count,children[i]);
             count += LoadChecker._countElements(children[i].childNodes);
         }
     }
     return count;
 };
 
-// see if DOM node count has changed
+/***
+ * Check if DOM element node count has changed since last check.
+ * If changes found reset steady state count, otherwise increment it.
+ * @private
+ */
 LoadChecker._nodeCountChangeObserver = function () {
-    //LoadChecker._intervalCount++;
     var currentNodeCount = LoadChecker._countElements(document.childNodes);
     var isNodeListChanging = LoadChecker._lastKnownNodeCountForNodeCountCheck !== currentNodeCount;
     if (isNodeListChanging) {
+        LoadChecker._steadyStateIntervals = 0;
         LoadChecker._lastKnownNodeCountForNodeCountCheck = currentNodeCount;
         console.log("LoadChecker: INFO: DOM node count changing; current:", currentNodeCount, " last:", LoadChecker._lastKnownNodeCountForNodeCountCheck);
     } else {
@@ -75,35 +104,28 @@ LoadChecker._nodeCountChangeObserver = function () {
     }
 };
 
-
-
-// see if DOM has had mutations since last check
+/***
+ * Check if DOM has had mutations since last check and if so
+ * reset state variables back to ZERO. Increment steady
+ * state count if there have been no changes
+ * @private
+ */
 LoadChecker._domMutationsCountObserver = function () {
     //LoadChecker._intervalCount++;
     var isDomChanging = LoadChecker._mutationsCount > 0;
 
     if (isDomChanging) {
-        console.log("LoadChecker: INFO: On iteration:(",LoadChecker._intervalCount,") DOM is changing, ", LoadChecker._mutationsCount, " since last reset, resetting steadyStateCount and mutationCount to ZERO");
+        console.log("LoadChecker: INFO: On iteration:(",LoadChecker._intervalCount,") DOM is changing, ",
+            LoadChecker._mutationsCount, " since last reset, resetting steadyStateCount and mutationCount to ZERO");
         LoadChecker._mutationsCount = 0;
         LoadChecker._steadyStateIntervals = 0;
     } else {
         LoadChecker._steadyStateIntervals++;
-        console.log("LoadChecker: INFO: On iteration:(",LoadChecker._intervalCount,") DOM has had ZERO mutations for the last " + LoadChecker._steadyStateIntervals + " intervals");
+        console.log("LoadChecker: INFO: On iteration:(",LoadChecker._intervalCount,
+            ") DOM has had ZERO mutations for the last " + LoadChecker._steadyStateIntervals + " intervals");
     }
 };
 
-
-
-/***
- *** Add some support for checking if the DOM has mutated
- ***/
-
-
-
-
-//LoadChecker._setupNodeCountChangeObserver = function() {
-//    window.setTimeout(LoadChecker._nodeCountChangeObserver, LoadChecker._CHECK_INTERVAL_MS);
-//}
 
 
 /***
@@ -115,7 +137,7 @@ LoadChecker._setupMutationObserverIfPossible = function() {
     try {
         MutationObserver = window.MutationObserver || window.WebKitMutationObserver ;
         var mutationObserver = new MutationObserver(function (mutations, observer) {
-            console.log(mutations, observer);
+            console.log("LoadChecker: INFO: mutations:",mutations, " observer:", observer);
             var currentNodeCount = LoadChecker._countElements(document.childNodes);
             var isNodeListCountChanging = LoadChecker._lastKnownNodeCountForMutationEvent !== currentNodeCount;
             LoadChecker._lastKnownNodeCountForMutationEvent = currentNodeCount;
@@ -127,13 +149,14 @@ LoadChecker._setupMutationObserverIfPossible = function() {
             if (isNodeListCountChanging) {
                 LoadChecker._mutationsCount++;
             }
-            console.log("Current node count:",currentNodeCount," Last node count:",
+            console.log("LoadChecker: INFO: Current node count:",currentNodeCount," Last node count:",
                 LoadChecker._lastKnownNodeCountForMutationEvent," Count is changing:", isNodeListCountChanging,
                 " Mutations Count:",LoadChecker._mutationsCount);
 
         });
 
         if (mutationObserver) {
+            // TODO: need to better configure what we are observing, research needed
             mutationObserver.observe(document.documentElement, {
                 attributes: true,
                 characterData: true,
@@ -152,7 +175,10 @@ LoadChecker._setupMutationObserverIfPossible = function() {
     return true;
 };
 
-// setup page load checks
+/***
+ * Setup the interval function that will be called to determine if the page is loaded.
+ * @private
+ */
 LoadChecker._setupLoadChecker = function () {
     try {
         LoadChecker._steadyStateIntervals = 0;
@@ -171,7 +197,11 @@ LoadChecker._setupLoadChecker = function () {
     }
 };
 
-// clean-up as needed after page loaded or timeout or other exception
+/***
+ * After the page loaded or in the event of an exception, clean-up
+ * by turning off the interval check
+ * @private
+ */
 LoadChecker._cleanupLoadChecker = function () {
     try {
         clearInterval(LoadChecker._domMutationOrNodeCountIntervalCheck);
@@ -182,12 +212,21 @@ LoadChecker._cleanupLoadChecker = function () {
     }
 };
 
-// utility to get seconds for number of intervals
+
+/***
+ * Translate number of intervals into elapsed seconds
+ * @param intervalCount - intervals
+ * @returns {number} of seconds elapsed
+ * @private
+ */
 LoadChecker._getSecondsForIntervals = function (intervalCount) {
     return intervalCount * LoadChecker._CHECK_INTERVAL_MS / 1000.0;
 };
 
 /***
+ * Perform check to determine if the page has loaded or throw an error if the alloted
+ * time has exceeded.
+ *
  * If we detect that the page has reached a steady state (no new elements added to DOM)
  * after a specific time period, we assume the page is loaded. If we have exceeded the
  * maximum allotted time to reach a steady state we will throw an error suggesting the
@@ -198,7 +237,8 @@ LoadChecker._getSecondsForIntervals = function (intervalCount) {
  * for the browser and response time of the web site. Both would need to be considered
  * when determining the appropriate time outs for reaching or failing to reach a steady state.
  *
- * @returns {boolean}
+ * @returns {boolean} true if page has loaded, false otherwise
+ * @throws error if the allotted time for determining if page has loaded has been exceeded
  * @private
  */
 LoadChecker._isPageLoaded = function () {
@@ -221,6 +261,9 @@ LoadChecker._isPageLoaded = function () {
 
 /***
  * Check if page is loaded at timed intervals.
+ * If the user callback throws an exception it will be caught and a
+ * message sent to the console.
+ * TODO: Consider re-throwing exception from user defined callback should
  * @throws error if page load checks exceed defined maximums
  * @private
  */
@@ -249,6 +292,11 @@ LoadChecker._executeCallbackAfterPageIsLoaded = function() {
     }
 };
 
+/***
+ * Perform basic validation on configuration.
+ * NOTE: comment out this validation and make MAX_INTERVALS < that STEADY_INTERVALS to test time out errors
+ * @private
+ */
 LoadChecker._validateConfiguration = function() {
     if (LoadChecker._READY_AFTER_N_STEADY_STATE_INTERVALS >= LoadChecker._EXIT_REGARDLESS_AFTER_MAX_INTERVALS) {
         var errorMsg = "LoadChecker: ERROR: Configuration Error LoadChecker._READY_AFTER_N_STEADY_STATE_INTERVALS("+LoadChecker._READY_AFTER_N_STEADY_STATE_INTERVALS+
@@ -259,6 +307,7 @@ LoadChecker._validateConfiguration = function() {
 };
 
 /***
+ * Main Entry point: LoadChecker.callWhenReadyToGo
  * Continuously check if page is loaded and execute the supplied call back when it is.
  * To prevent infinite waits, fail with exception after predetermine number of checks
  * (see configuration variables at top of file).
