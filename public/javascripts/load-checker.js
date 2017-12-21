@@ -52,31 +52,6 @@ var LoadChecker = function() { // encapsulate the code in an object, keep everyt
     this._intervalCount = 0;
     this._steadyStateIntervals = 0;
     this._usedInstance = false;
-
-    // _____________________________________________________________________
-    // NOTE: EventUtil taken from WROX Professional JavaScript for Web Devs
-    // I'll defer to their browser variation chops
-    // --------------------------------------------------------------------------
-    this.EventUtil = {};
-    this.EventUtil.addEventHandler = function (oTarget, sEventType, fnHandler) {
-        if (oTarget.addEventListener) {
-            oTarget.addEventListener(sEventType, fnHandler, false);
-        } else if (oTarget.attachEvent) {
-            oTarget.attachEvent("on" + sEventType, fnHandler);
-        } else {
-            oTarget["on" + sEventType] = fnHandler;
-        }
-    };
-    this.EventUtil.removeEventHandler = function (oTarget, sEventType, fnHandler) {
-        if (oTarget.removeEventListener) {
-            oTarget.removeEventListener(sEventType, fnHandler, false);
-        } else if (oTarget.detachEvent) {
-            oTarget.detachEvent("on" + sEventType, fnHandler);
-        } else {
-            oTarget["on" + sEventType] = null;
-        }
-    };
-
 };
 
 /***
